@@ -1,21 +1,27 @@
-# 🛒 E-Commerce SQL Injection Lab & Security Assessment
+```markdown
+# 🛒 E-Commerce Security Assessment & Penetration Testing Lab
 
 > **Disclaimer:** This project was developed solely for educational purposes and academic assessment. The intentional vulnerabilities included in this repository are meant to demonstrate penetration testing techniques in a safe, local environment.
 
-**Author:** Xanlar Rsutamov  
+**Author:** [Senin Adın Soyadın]  
+**Student ID:** [Öğrenci Numaran]  
 **Date:** April 2026  
 
 ---
 
 ## 📑 Executive Summary
-The objective of this project was to develop a functional local e-commerce web application ("Forma Dünyası") and conduct a security assessment to identify potential vulnerabilities. The application allows users to browse products, use a dynamic shopping cart, and place orders stored in a MySQL database. 
+The objective of this project was to develop a functional local e-commerce web application ("Forma Dünyası") and conduct a comprehensive security assessment to identify potential vulnerabilities. The application allows users to browse products, use a dynamic JavaScript-based shopping cart, and place orders stored in a MySQL database. 
 
-During the penetration testing phase, a **CRITICAL Authentication Bypass via SQL Injection (SQLi)** vulnerability was discovered in the administrator login panel. This report details the methodology, the technical exploitation, and the recommended remediation strategies.
+During the penetration testing phase, **TWO CRITICAL vulnerabilities** were discovered:
+1. **Authentication Bypass via SQL Injection (SQLi)** in the admin login panel.
+2. **Stored Cross-Site Scripting (XSS)** via the shopping cart checkout process.
+
+This report details the methodology, technical exploitation, business impact, and recommended remediation strategies for both vulnerabilities.
 
 ---
 
 ## 🛠️ Environment & Tech Stack
-The testing was conducted in a safe, isolated local environment (`localhost`) to simulate a real-world web server architecture.
+The testing was conducted in a safe, isolated local environment (`localhost`).
 
 - **Web Server:** Apache (via XAMPP)
 - **Database:** MySQL
@@ -24,63 +30,74 @@ The testing was conducted in a safe, isolated local environment (`localhost`) to
 
 ---
 
-## 🚨 Vulnerability Assessment: SQL Injection (SQLi)
+## 🚨 Vulnerability 1: Authentication Bypass (SQL Injection)
 
-### 1. Description of the Flaw
-The vulnerability exists because the application accepts user input from the login form and concatenates it directly into the database query without sanitization. 
+### 1.1. Description of the Flaw
+The application accepts user input from the login form and concatenates it directly into the database query without sanitization. 
 
 **Vulnerable PHP Code (`login.php`):**
 ```php
-$sorgu = "SELECT * FROM admin WHERE kullanici_adi = '$kullanici' AND sifre = '$sifre'";
-$sonuc = $baglanti->query($sorgu);
+$admin_sorgu = "SELECT * FROM admin WHERE kullanici_adi = '$email_veya_kullanici' AND sifre = '$sifre'";
 ```
 
-### 2. The Exploit (Proof of Concept)
-To demonstrate the vulnerability, an authentication bypass was performed. A standard payload (`' OR '1'='1`) would normally fail due to **SQL Operator Precedence** (the `AND` operator is evaluated before `OR`, causing the password check to invalidate the query). 
-
-To successfully bypass this, a SQL comment symbol (`#`) was injected to truncate the rest of the query.
+### 1.2. The Exploit (Proof of Concept)
+A standard payload (`' OR '1'='1`) fails due to SQL Operator Precedence (`AND` is evaluated before `OR`). To bypass this, a SQL comment symbol (`#`) was injected to truncate the password verification logic.
 
 **Injected Payload (Username Field):**
 ```sql
 ' OR '1'='1'#
 ```
 
-**How the Database Reads It:**
-When the payload is injected, the backend database query transforms into:
-```sql
-SELECT * FROM admin WHERE kullanici_adi = '' OR '1'='1'#' AND sifre = ''
-```
-The `#` symbol comments out the remainder of the SQL statement (`AND sifre = ''`). Since `'1'='1'` is mathematically TRUE, the database ignores the password requirement entirely and grants administrative access.
+**Execution Flow:**
+When the payload is injected, the database evaluates: 
+`SELECT * FROM admin WHERE kullanici_adi = '' OR '1'='1'#' AND sifre = ''`
+Since `'1'='1'` is mathematically TRUE and the `#` comments out the rest of the query, the database ignores the password requirement entirely and grants administrative access.
 
-### 3. Post-Exploitation (Admin Panel Access)
-Upon successful injection, the system grants access to `admin.php`. Without knowing any credentials, the attacker can view the highly sensitive `sifarisler` (Orders) database table in real-time.
+### 1.3. Remediation (The Patch)
+Implement **Prepared Statements** to separate user input from SQL logic.
 
-**Simulated Admin Dashboard View:**
-| ID | Order Details | Total Amount (AZN) | Date |
-|:---|:---|:---|:---|
-| 3 | Neftçi Retro Forma (90 AZN), | 90 | 2026-04-04 15:30:00 |
-| 2 | Sabah Ev Forması (60 AZN), Qarabağ Səfər (65 AZN), | 125 | 2026-04-04 15:28:45 |
-| 1 | Qarabağ Səfər Forması (65 AZN), | 65 | 2026-04-04 15:25:10 |
-
----
-
-## 💥 Business and Security Impact
-If this vulnerability existed in a live production environment, the consequences would be severe:
-1. **Data Breach:** Attackers gain unauthorized access to view sensitive customer order data.
-2. **Loss of Integrity:** An attacker could modify database structures, alter prices, or delete legitimate orders.
-3. **Total Compromise:** Represents a complete breakdown of the application's access control mechanisms.
-
----
-
-## 🛡️ Remediation and Solution (The Patch)
-To secure the application against SQL Injection, the source code must be updated to separate user input from SQL logic. The most effective defense is the implementation of **Prepared Statements**.
-
-**Secured Code Implementation:**
 ```php
-// Secure implementation using Prepared Statements (MySQLi)
 $stmt = $baglanti->prepare("SELECT * FROM admin WHERE kullanici_adi = ? AND sifre = ?");
 $stmt->bind_param("ss", $kullanici, $sifre);
 $stmt->execute();
-$sonuc = $stmt->get_result();
 ```
-By utilizing prepared statements, the database engine treats the user input strictly as literal string data rather than executable SQL commands, rendering injection payloads completely ineffective.
+
+---
+
+## ☢️ Vulnerability 2: Stored Cross-Site Scripting (XSS)
+
+### 2.1. Description of the Flaw
+The shopping cart relies on client-side JavaScript to compile order details. An attacker can manipulate the browser console to inject malicious scripts into the order payload. The backend stores this payload in the database and renders it in the Admin Dashboard (`admin.php`) without output encoding.
+
+**Vulnerable PHP Code (`admin.php`):**
+```php
+// The 'detaylar' column is rendered directly as HTML without sanitization
+echo "<td>" . $satir['detaylar'] . "</td>";
+```
+
+### 2.2. The Exploit (Proof of Concept)
+The attacker manipulates the cart data array directly via the browser's Developer Tools (Console) and pushes a malicious payload disguised as a product.
+
+**Injected JavaScript Payload (Browser Console):**
+```javascript
+sepet.push({ isim: "<script>alert('XSS HÜCUMU: Admin Paneli Ələ Keçirildi! ☠️');</script>", fiyat: 0 });
+```
+
+**Execution Flow:**
+1. The modified array is sent via a `POST` request to `sifaris_qeyd.php`.
+2. The payload is saved permanently in the `sifarisler` database table as an order detail.
+3. When the Administrator logs in and views the Orders tab, the browser reads the `<script>` tags as native code rather than text. 
+4. The code executes automatically, triggering the alert box on the Admin's screen.
+
+### 2.3. Business and Security Impact
+While the Proof of Concept uses a harmless `alert()`, a real-world attacker could use `document.cookie` within the script to steal the administrator's active session token. This would lead to complete account takeover, allowing the attacker to bypass the login screen entirely and manipulate the platform from their own machine.
+
+### 2.4. Remediation (The Patch)
+All user-generated content must be sanitized before being rendered in the browser. PHP's `htmlspecialchars()` function must be used to convert special HTML characters into safe entities.
+
+**Secured Code Implementation:**
+```php
+// The script tags are converted to safe text (e.g., < becomes &lt;)
+echo "<td>" . htmlspecialchars($satir['detaylar'], ENT_QUOTES, 'UTF-8') . "</td>";
+```
+```
